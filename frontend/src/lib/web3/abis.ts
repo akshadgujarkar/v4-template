@@ -1863,6 +1863,25 @@ export const RewardVaultABI = [
 
 export const MRLVHookABI = [
   {
+    "type": "function",
+    "name": "removeActiveLiquidity",
+    "inputs": [
+      {
+        "name": "posKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "constructor",
     "inputs": [
       {

@@ -22,6 +22,7 @@ export interface PositionData {
   amount?: string;
   tickLower?: number;
   tickUpper?: number;
+  posKey?: string;
 }
 
 export function PositionCard({

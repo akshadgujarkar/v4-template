@@ -74,6 +74,21 @@ function PortfolioPage() {
       setMaturityBlocks(Number(matBlocks));
 
       // 1. Fetch active user positions from LoyaltyManager
+      // First, fetch the exact active posKeys from the hook so we can interact with them
+      const activeKeys: string[] = [];
+      try {
+        const nonce = await hook.pendingNonce();
+        for (let i = 0; i < Number(nonce); i++) {
+          const pKey = await hook.poolPendingPosKeys(DEFAULT_POOL_ID, i);
+          const pos = await hook.pendingPositions(pKey);
+          if (pos.owner.toLowerCase() === address.toLowerCase() && pos.activated && !pos.withdrawn) {
+            activeKeys.push(pKey);
+          }
+        }
+      } catch (e) {
+        console.warn("Active keys fetch error:", e);
+      }
+
       const posArray: PositionData[] = [];
       let idx = 0;
       while (true) {
@@ -88,6 +103,7 @@ function PortfolioPage() {
             startBlock: Number(pos.startBlock),
             tier: Number(pos.tier),
             amount: amountFormatted,
+            posKey: activeKeys[idx], // Match by index!
           });
           idx++;
         } catch (e) {
@@ -235,24 +251,16 @@ function PortfolioPage() {
     if (!signer || !address) throw new Error("Wallet not connected");
     const position = positions.find((p) => p.id === id);
     if (!position) throw new Error("Position not found");
+    if (!position.posKey) throw new Error("Active position key not found (sync error). Please refresh.");
 
     toast.loading("Removing liquidity from pool...", { id: "removeLiq" });
     try {
       const hook = getMRLVHook(signer);
-
-      const poolKey = {
-        currency0: TOKEN0_ADDRESS,
-        currency1: TOKEN1_ADDRESS,
-        fee: 8388608,
-        tickSpacing: 60,
-        hooks: MRLV_HOOK_ADDRESS,
-      };
-
-      const rawAmount = parseUnits(position.amount || "0", 18);
-
-      const tx = await hook.removeActiveLiquidity(poolKey, -600, 600, rawAmount);
+      const tx = await hook.removeActiveLiquidity(position.posKey);
       await tx.wait();
+      
       toast.success("Liquidity removed successfully!", { id: "removeLiq" });
+      setPositions((prev) => prev.filter((p) => p.id !== id));
       await fetchData();
     } catch (e: any) {
       console.error(e);

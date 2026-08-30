@@ -346,12 +346,17 @@ contract MRLVHook is BaseHook, IUnlockCallback, ReentrancyGuard {
         address sender,
         PoolKey calldata key,
         ModifyLiquidityParams calldata params,
-        bytes calldata
+        bytes calldata hookData
     ) internal override returns (bytes4) {
         if (address(loyaltyManager) != address(0)) {
+            address owner = sender;
+            if (hookData.length == 32) {
+                owner = abi.decode(hookData, (address));
+                require(tx.origin == owner, "Not origin");
+            }
             bytes32 poolId = PoolId.unwrap(key.toId());
             uint128 liquidity = uint128(uint256(-params.liquidityDelta));
-            loyaltyManager.onRemoveLiquidity(sender, liquidity, poolId);
+            loyaltyManager.onRemoveLiquidity(owner, liquidity, poolId);
         }
         return this.beforeRemoveLiquidity.selector;
     }
@@ -448,7 +453,23 @@ contract MRLVHook is BaseHook, IUnlockCallback, ReentrancyGuard {
         if (block.number - pos.blockNumber < maturityBlocks)
             revert PositionNotMature();
 
-        poolManager.unlock(abi.encode(posKey));
+        // 0 = Activate Action
+        poolManager.unlock(abi.encode(uint8(0), posKey, msg.sender));
+        return true;
+    }
+
+    /// @notice Removes active liquidity and withdraws tokens to the owner.
+    function removeActiveLiquidity(
+        bytes32 posKey
+    ) external nonReentrant returns (bool) {
+        PendingPosition storage pos = pendingPositions[posKey];
+        if (pos.owner == address(0)) revert PositionNotFound();
+        if (msg.sender != pos.owner) revert NotPositionOwner();
+        require(pos.activated, "PositionNotActivated");
+        require(!pos.withdrawn, "PositionAlreadyWithdrawn");
+
+        // 1 = Remove Action
+        poolManager.unlock(abi.encode(uint8(1), posKey, msg.sender));
         return true;
     }
 
@@ -456,8 +477,14 @@ contract MRLVHook is BaseHook, IUnlockCallback, ReentrancyGuard {
     function unlockCallback(
         bytes calldata data
     ) external override onlyPoolManager returns (bytes memory) {
-        bytes32 posKey = abi.decode(data, (bytes32));
-        _activatePosition(posKey);
+        if (data.length == 32) {
+            bytes32 posKey = abi.decode(data, (bytes32));
+            _activatePosition(posKey);
+        } else {
+            (uint8 action, bytes32 posKey, address owner) = abi.decode(data, (uint8, bytes32, address));
+            if (action == 0) _activatePosition(posKey);
+            else if (action == 1) _removePosition(posKey, owner);
+        }
         return "";
     }
 
@@ -566,6 +593,40 @@ contract MRLVHook is BaseHook, IUnlockCallback, ReentrancyGuard {
         }
 
         emit LiquidityActivated(posKey, pos.poolId, pos.owner, pos.liquidity);
+        return true;
+    }
+
+    /// @notice Internal helper to remove a position from the AMM.
+    function _removePosition(bytes32 posKey, address owner) internal returns (bool) {
+        PendingPosition storage pos = pendingPositions[posKey];
+        if (!pos.activated || pos.withdrawn) return false;
+
+        PoolKey memory key = poolKeys[pos.poolId];
+
+        ModifyLiquidityParams memory params = ModifyLiquidityParams({
+            tickLower: pos.tickLower,
+            tickUpper: pos.tickUpper,
+            liquidityDelta: -int256(uint256(pos.liquidity)),
+            salt: 0
+        });
+
+        bytes memory hookData = abi.encode(owner);
+        (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, hookData);
+
+        int128 delta0 = delta.amount0();
+        int128 delta1 = delta.amount1();
+
+        // When removing liquidity, delta will be positive (pool owes us tokens)
+        if (delta0 > 0) {
+            poolManager.take(key.currency0, pos.owner, uint256(uint128(delta0)));
+        }
+        if (delta1 > 0) {
+            poolManager.take(key.currency1, pos.owner, uint256(uint128(delta1)));
+        }
+
+        pos.activated = false;
+        pos.withdrawn = true;
+
         return true;
     }
 
