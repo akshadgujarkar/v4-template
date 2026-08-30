@@ -221,7 +221,7 @@ function TradePage() {
         settleUsingBurn: false,
       };
 
-      const swapTx = await swapRouter.swap(key, params, testSettings, "0x");
+      const swapTx = await swapRouter.swap(key, params, testSettings, "0x", { gasLimit: 3000000 });
       await swapTx.wait();
 
       toast.success("Swap executed successfully! Honest base fee applied.", { id: "swap" });

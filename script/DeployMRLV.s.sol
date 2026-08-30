@@ -86,6 +86,10 @@ contract LiquiditySetupHelper {
         bytes32 posKey = hook.depositPendingLiquidity(key, lpParams, amount0, amount1);
         hook.activateLiquidity(posKey);
     }
+
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
 }
 
 contract AttackerHelper {

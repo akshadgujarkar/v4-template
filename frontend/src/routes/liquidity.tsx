@@ -242,7 +242,8 @@ function LiquidityPage() {
       poolKey,
       params,
       parsedAmount0,
-      parsedAmount1
+      parsedAmount1,
+      { gasLimit: 3000000 }
     );
     await depositTx.wait();
 
@@ -250,13 +251,13 @@ function LiquidityPage() {
     await fetchBalancesAndPool();
   };
 
-  const handleActivateMaturePositions = async () => {
+  const handleActivateMaturePositions = async (posKey: string) => {
     if (!signer) return;
     setIsActivating(true);
     toast.loading("Activating mature positions on-chain...", { id: "act" });
     try {
       const hook = getMRLVHook(signer);
-      const tx = await hook.activateLiquidity(POOL_ID);
+      const tx = await hook.activateLiquidity(posKey, { gasLimit: 3000000 });
       await tx.wait();
       toast.success("Positions successfully activated into Uniswap v4 pool and Loyalty NFT minted!", { id: "act" });
       await fetchBalancesAndPool();
@@ -280,7 +281,7 @@ function LiquidityPage() {
         tickSpacing: 60,
         hooks: MRLV_HOOK_ADDRESS,
       };
-      const tx = await hook.withdrawPendingLiquidity(posKey, poolKey);
+      const tx = await hook.withdrawPendingLiquidity(posKey, poolKey, { gasLimit: 3000000 });
       await tx.wait();
       toast.success("Pending position refunded back to your wallet!", { id: "with" });
       await fetchBalancesAndPool();
@@ -437,7 +438,7 @@ function LiquidityPage() {
                         size="sm"
                         variant={pos.isMature ? "default" : "secondary"}
                         disabled={!pos.isMature || isActivating}
-                        onClick={handleActivateMaturePositions}
+                        onClick={() => handleActivateMaturePositions(pos.key)}
                         className="text-xs gap-1"
                       >
                         <CheckCircle className="size-3.5" />

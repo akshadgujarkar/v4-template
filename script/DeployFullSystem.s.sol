@@ -32,6 +32,31 @@ import {ScoutRoster} from "../src/fantasy-league/ScoutRoster.sol";
 import {MEVScoutLeague} from "../src/fantasy-league/MEVScoutLeague.sol";
 import {ScoutPointsOracle} from "../src/fantasy-league/ScoutPointsOracle.sol";
 
+// Helper to bundle deposit and activation in one transaction
+contract LiquiditySetupHelper {
+    function setup(
+        MRLVHook hook, 
+        PoolKey calldata key, 
+        ModifyLiquidityParams calldata lpParams, 
+        uint256 amount0, 
+        uint256 amount1, 
+        MockERC20 token0, 
+        MockERC20 token1
+    ) external {
+        token0.transferFrom(msg.sender, address(this), amount0);
+        token1.transferFrom(msg.sender, address(this), amount1);
+        token0.approve(address(hook), amount0);
+        token1.approve(address(hook), amount1);
+        
+        bytes32 posKey = hook.depositPendingLiquidity(key, lpParams, amount0, amount1);
+        hook.activateLiquidity(posKey);
+    }
+
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
+}
+
 contract DeployFullSystem is Script {
     function run() external {
         // Use anvil default address or env var
@@ -207,27 +232,25 @@ contract DeployFullSystem is Script {
             salt: bytes32(0)
         });
 
-        // Add liquidity through MRLVHook deposit function directly
-        token0.approve(address(hook), type(uint256).max);
-        token1.approve(address(hook), type(uint256).max);
-
-        // We compute the amount0 and amount1 that will be needed, or just provide generous max values
-        // for the initial deposit since unused tokens are not taken (or we use them for exact amounts)
-        // Here we just pass 100,000 ether to satisfy deposit requirements
-        bytes32 posKey = hook.depositPendingLiquidity(
-            key,
-            lpParams,
-            100_000 ether,
-            100_000 ether
+        // Add liquidity through LiquiditySetupHelper to avoid posKey mismatch across broadcast transactions
+        LiquiditySetupHelper lpHelper = new LiquiditySetupHelper();
+        token0.approve(address(lpHelper), type(uint256).max);
+        token1.approve(address(lpHelper), type(uint256).max);
+        
+        lpHelper.setup(
+            hook, 
+            key, 
+            lpParams, 
+            100_000 ether, 
+            100_000 ether, 
+            token0, 
+            token1
         );
         
         require(PoolId.unwrap(poolId) == PoolId.unwrap(key.toId()), "PoolId mismatch");
         
         console2.log("Activating liquidity for PoolId:");
         console2.logBytes32(PoolId.unwrap(poolId));
-        
-        // Activate it immediately since maturity blocks = 0
-        hook.activateLiquidity(posKey);
         
         // Restore maturity blocks back to 5
         detector.setLiquidityMaturityBlocks(5);

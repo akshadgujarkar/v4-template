@@ -1941,12 +1941,18 @@ export const MRLVHookABI = [
     "name": "activateLiquidity",
     "inputs": [
       {
-        "name": "poolId",
+        "name": "posKey",
         "type": "bytes32",
-        "internalType": "PoolId"
+        "internalType": "bytes32"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -2018,12 +2024,12 @@ export const MRLVHookABI = [
         ]
       },
       {
-        "name": "delta0",
+        "name": "delta",
         "type": "int256",
         "internalType": "BalanceDelta"
       },
       {
-        "name": "delta1",
+        "name": "feesAccrued",
         "type": "int256",
         "internalType": "BalanceDelta"
       },
@@ -2243,12 +2249,12 @@ export const MRLVHookABI = [
         ]
       },
       {
-        "name": "delta0",
+        "name": "delta",
         "type": "int256",
         "internalType": "BalanceDelta"
       },
       {
-        "name": "delta1",
+        "name": "feesAccrued",
         "type": "int256",
         "internalType": "BalanceDelta"
       },
@@ -3188,67 +3194,6 @@ export const MRLVHookABI = [
   },
   {
     "type": "function",
-    "name": "removeActiveLiquidity",
-    "inputs": [
-      {
-        "name": "key",
-        "type": "tuple",
-        "internalType": "struct PoolKey",
-        "components": [
-          {
-            "name": "currency0",
-            "type": "address",
-            "internalType": "Currency"
-          },
-          {
-            "name": "currency1",
-            "type": "address",
-            "internalType": "Currency"
-          },
-          {
-            "name": "fee",
-            "type": "uint24",
-            "internalType": "uint24"
-          },
-          {
-            "name": "tickSpacing",
-            "type": "int24",
-            "internalType": "int24"
-          },
-          {
-            "name": "hooks",
-            "type": "address",
-            "internalType": "contract IHooks"
-          }
-        ]
-      },
-      {
-        "name": "tickLower",
-        "type": "int24",
-        "internalType": "int24"
-      },
-      {
-        "name": "tickUpper",
-        "type": "int24",
-        "internalType": "int24"
-      },
-      {
-        "name": "liquidity",
-        "type": "uint128",
-        "internalType": "uint128"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "delta",
-        "type": "int256",
-        "internalType": "BalanceDelta"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "rewardVault",
     "inputs": [],
     "outputs": [
@@ -3593,11 +3538,6 @@ export const MRLVHookABI = [
   },
   {
     "type": "error",
-    "name": "InvalidPool",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NotGovernance",
     "inputs": []
   },
@@ -3609,11 +3549,6 @@ export const MRLVHookABI = [
   {
     "type": "error",
     "name": "NotPositionOwner",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotSelf",
     "inputs": []
   },
   {
@@ -3837,19 +3772,6 @@ export const MEVScoutLeagueABI = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "setPointsOracle",
-    "inputs": [
-      {
-        "name": "_oracle",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
