@@ -9,6 +9,7 @@ import { fadeInUp, stagger, viewportOnce } from "@/lib/motion";
 import { useWeb3 } from "@/lib/web3/Web3Context";
 import { TransactionButton } from "@/components/web3/TransactionButton";
 import { parseUnits, formatEther, parseEther } from "ethers";
+import { maxLiquidityForAmounts } from "@/lib/web3/liquidityMath";
 import {
   getMRLVHook,
   getToken0,
@@ -227,14 +228,30 @@ function LiquidityPage() {
     const activeTickLower = rangePreset === 3 ? customTickLower : RANGE_PRESETS[rangePreset].tickLower;
     const activeTickUpper = rangePreset === 3 ? customTickUpper : RANGE_PRESETS[rangePreset].tickUpper;
 
-    // Symmetric liquidity delta estimation with safe margin (excess escrow is auto-refunded on activation)
-    const delta = parsedAmount0 < parsedAmount1 ? parsedAmount0 : parsedAmount1;
-    const safeLiquidityDelta = (delta * 999n) / 1000n;
+    // ── Correct Uniswap V4 liquidity math ──────────────────────────────
+    // Query the pool's current sqrtPriceX96 from the on-chain state
+    const hookRead = getMRLVHook(provider!);
+    const slot0 = await hookRead.getPoolSlot0(POOL_ID);
+    const sqrtPriceX96 = BigInt(slot0.sqrtPriceX96.toString());
+
+    // Compute the maximum liquidity (L) that can be minted from our token amounts
+    let liquidityDelta = maxLiquidityForAmounts(
+      sqrtPriceX96,
+      activeTickLower,
+      activeTickUpper,
+      parsedAmount0,
+      parsedAmount1
+    );
+
+    // Apply a 0.1% safety haircut so the pool never asks for more tokens
+    // than we escrowed (any excess is auto-refunded on activation)
+    liquidityDelta = (liquidityDelta * 999n) / 1000n;
+    if (liquidityDelta <= 0n) liquidityDelta = 1n;
 
     const params = {
       tickLower: activeTickLower,
       tickUpper: activeTickUpper,
-      liquidityDelta: safeLiquidityDelta > 0n ? safeLiquidityDelta : parseUnits("1", 18),
+      liquidityDelta,
       salt: "0x0000000000000000000000000000000000000000000000000000000000000000",
     };
 
@@ -251,15 +268,40 @@ function LiquidityPage() {
     await fetchBalancesAndPool();
   };
 
-  const handleActivateMaturePositions = async (posKey: string) => {
+  const handleActivateSinglePosition = async (posKey: string) => {
     if (!signer) return;
     setIsActivating(true);
-    toast.loading("Activating mature positions on-chain...", { id: "act" });
+    toast.loading("Activating position on-chain...", { id: "act" });
     try {
       const hook = getMRLVHook(signer);
       const tx = await hook.activateLiquidity(posKey, { gasLimit: 3000000 });
       await tx.wait();
-      toast.success("Positions successfully activated into Uniswap v4 pool and Loyalty NFT minted!", { id: "act" });
+      toast.success("Position successfully activated into Uniswap v4 pool and Loyalty NFT minted!", { id: "act" });
+      await fetchBalancesAndPool();
+    } catch (e: any) {
+      console.error(e);
+      toast.error(parseContractError(e), { id: "act" });
+    } finally {
+      setIsActivating(false);
+    }
+  };
+
+  const handleBatchActivation = async () => {
+    if (!signer) return;
+    const maturePositions = userPendingPositions.filter((p) => p.isMature);
+    if (maturePositions.length === 0) {
+      toast.info("No mature positions to activate.");
+      return;
+    }
+    setIsActivating(true);
+    toast.loading(`Activating ${maturePositions.length} mature position(s)...`, { id: "act" });
+    try {
+      const hook = getMRLVHook(signer);
+      for (const pos of maturePositions) {
+        const tx = await hook.activateLiquidity(pos.key, { gasLimit: 3000000 });
+        await tx.wait();
+      }
+      toast.success(`${maturePositions.length} position(s) activated into Uniswap v4 pool!`, { id: "act" });
       await fetchBalancesAndPool();
     } catch (e: any) {
       console.error(e);
@@ -438,7 +480,7 @@ function LiquidityPage() {
                         size="sm"
                         variant={pos.isMature ? "default" : "secondary"}
                         disabled={!pos.isMature || isActivating}
-                        onClick={() => handleActivateMaturePositions(pos.key)}
+                        onClick={() => handleActivateSinglePosition(pos.key)}
                         className="text-xs gap-1"
                       >
                         <CheckCircle className="size-3.5" />
@@ -467,7 +509,7 @@ function LiquidityPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleActivateMaturePositions}
+                onClick={handleBatchActivation}
                 disabled={isActivating || !signer}
                 className="gap-2"
               >

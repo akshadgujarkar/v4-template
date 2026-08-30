@@ -191,13 +191,38 @@ function PortfolioPage() {
 
   const handleActivateMaturePositions = async () => {
     if (!signer) return;
+    const maturePos = pendingPositions.filter((p) => p.isMature);
+    if (maturePos.length === 0) {
+      toast.info("No mature positions to activate.");
+      return;
+    }
     setIsActivating(true);
-    toast.loading("Activating mature positions into Uniswap v4 pool...", { id: "act" });
+    toast.loading(`Activating ${maturePos.length} mature position(s)...`, { id: "act" });
     try {
       const hook = getMRLVHook(signer);
-      const tx = await hook.activateLiquidity(DEFAULT_POOL_ID);
-      await tx.wait();
+      for (const pos of maturePos) {
+        const tx = await hook.activateLiquidity(pos.key, { gasLimit: 3000000 });
+        await tx.wait();
+      }
       toast.success("Positions activated! Staked LP registered & Loyalty NFT minted.", { id: "act" });
+      await fetchData();
+    } catch (e: any) {
+      console.error(e);
+      toast.error(parseContractError(e), { id: "act" });
+    } finally {
+      setIsActivating(false);
+    }
+  };
+
+  const handleActivateSinglePosition = async (posKey: string) => {
+    if (!signer) return;
+    setIsActivating(true);
+    toast.loading("Activating position...", { id: "act" });
+    try {
+      const hook = getMRLVHook(signer);
+      const tx = await hook.activateLiquidity(posKey, { gasLimit: 3000000 });
+      await tx.wait();
+      toast.success("Position activated! Staked LP registered & Loyalty NFT minted.", { id: "act" });
       await fetchData();
     } catch (e: any) {
       console.error(e);
@@ -375,7 +400,7 @@ function PortfolioPage() {
                         size="sm"
                         variant={pos.isMature ? "default" : "secondary"}
                         disabled={!pos.isMature || isActivating}
-                        onClick={handleActivateMaturePositions}
+                        onClick={() => handleActivateSinglePosition(pos.key)}
                         className="text-xs gap-1"
                       >
                         <CheckCircle2 className="size-3.5" />

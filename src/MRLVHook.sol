@@ -6,6 +6,7 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
@@ -29,6 +30,7 @@ import {LoyaltyManager} from "./LoyaltyManager.sol";
 ///         and analytics emission to AnalyticsEmitter.
 ///         Phase 2 modules (RewardVault, LoyaltyManager) are referenced via TODO stubs.
 contract MRLVHook is BaseHook, IUnlockCallback, ReentrancyGuard {
+    using StateLibrary for IPoolManager;
     // ─── Custom errors ───────────────────────────────────────────────
     error NotGovernance();
     error HookIsPaused();
@@ -688,5 +690,13 @@ contract MRLVHook is BaseHook, IUnlockCallback, ReentrancyGuard {
         remainingBlocks = isMature ? 0 : (maturityBlocks - age);
         liquidity = pos.liquidity;
         owner = pos.owner;
+    }
+
+    /// @notice Returns the pool's current sqrtPriceX96 and tick so the frontend
+    ///         can compute the correct liquidityDelta from token amounts.
+    function getPoolSlot0(
+        bytes32 poolId
+    ) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee) {
+        return poolManager.getSlot0(PoolId.wrap(poolId));
     }
 }
