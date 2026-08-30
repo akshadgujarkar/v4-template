@@ -1,7 +1,7 @@
 import * as React from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { motion } from "motion/react";
-import { Users, Trophy, Activity, Sparkles, Shield, AlertCircle, PlusCircle, CheckCircle, Flame } from "lucide-react";
+import { Users, Trophy, Activity, Sparkles, Shield, AlertCircle, PlusCircle, CheckCircle, Flame, Radio, Zap, Medal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/mrvl/section-label";
 import { WalletConnectButton } from "@/components/layout/wallet-connect-button";
@@ -12,11 +12,12 @@ import {
   getScoutRoster,
   getMRLVToken,
   getScoutPointsOracle,
+  getAnalyticsEmitter,
   FANTASY_LEAGUE_ADDRESS,
   SCOUT_ROSTER_ADDRESS,
 } from "@/lib/web3/contracts";
 import { TransactionButton } from "@/components/web3/TransactionButton";
-import { parseUnits, formatUnits, formatEther, parseEther } from "ethers";
+import { parseUnits, formatUnits } from "ethers";
 import { parseContractError } from "@/lib/web3/ContractError";
 import { toast } from "sonner";
 
@@ -40,24 +41,64 @@ interface ScoutPick {
   flagged: boolean;
 }
 
+interface LeaderboardEntry {
+  address: string;
+  picksCount: number;
+  seasonPoints: number;
+  allTimeScore: number;
+  estimatedPayout: string;
+}
+
+interface LiveDetection {
+  trader: string;
+  riskScore: number;
+  feeSurcharge: number;
+  timestamp: string;
+}
+
+// Searchers available on local Anvil (Accounts 5 to 9 & Account 0)
 const FEATURED_SEARCHERS = [
   {
-    address: "0x00000000003b3cc22af3ae1eac0440bcee416b40",
-    name: "jaredfromsubway.eth",
-    archetype: "Sandwich Leader",
-    reputation: "High Frequency",
+    address: "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+    name: "Jared Sandwich Bot",
+    archetype: "Sandwich Extractor",
+    reputation: "Anvil Account #5",
+    description: "Executes rapid frontrun-backrun sandwich sequences around pool swaps."
   },
   {
-    address: "0x6b75d8af000000e20b7a7ddf000ba900b4009a80",
-    name: "Wintermute MEV Bot",
+    address: "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+    name: "Wintermute Fast Arb",
     archetype: "Arbitrageur",
-    reputation: "Institutional",
+    reputation: "Anvil Account #6",
+    description: "Rapid opposite-direction reversal trades exploiting tick mispricings."
   },
   {
-    address: "0x98c3d3183c4b8a650614ad179a1a98be0a0d6b2e",
-    name: "Flashbots Searcher 0x98",
+    address: "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+    name: "Flashbots Backrunner",
     archetype: "Backrun Specialist",
-    reputation: "Stealth",
+    reputation: "Anvil Account #7",
+    description: "Heavy single-flow transactions generating massive price impacts."
+  },
+  {
+    address: "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+    name: "Atomic Liquidation Bot",
+    archetype: "Liquidation Sniper",
+    reputation: "Anvil Account #8",
+    description: "High-volume sandwich attacks capturing liquidation margins."
+  },
+  {
+    address: "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720",
+    name: "Toxic Flow Sniper",
+    archetype: "Cross-DEX Arbitrageur",
+    reputation: "Anvil Account #9",
+    description: "High-frequency reversal flows routing toxic flow into the pool."
+  },
+  {
+    address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    name: "Primary Deployer Searcher",
+    archetype: "Multi-Strategy Attacker",
+    reputation: "Anvil Account #0",
+    description: "Primary Anvil test account executing heavy simulation swaps."
   },
 ];
 
@@ -74,6 +115,9 @@ function FantasyLeaguePage() {
   const [mrlvBalance, setMrlvBalance] = React.useState<string>("0");
 
   const [userRoster, setUserRoster] = React.useState<ScoutPick[]>([]);
+  const [leaderboard, setLeaderboard] = React.useState<LeaderboardEntry[]>([]);
+  const [liveDetections, setLiveDetections] = React.useState<LiveDetection[]>([]);
+
   const [stakeAmount, setStakeAmount] = React.useState("50.0");
   const [customSearcher, setCustomSearcher] = React.useState("");
   const [customStake, setCustomStake] = React.useState("25.0");
@@ -87,47 +131,53 @@ function FantasyLeaguePage() {
     try {
       const league = getFantasyLeague(provider);
       const rosterContract = getScoutRoster(provider);
+      const oracle = getScoutPointsOracle(provider);
       const mrlv = getMRLVToken(provider);
 
-      // Current season
+      // 1. Current Season Details
       let currentId = 1;
+      let sPrizePool = 0n;
+      let sTotalPoints = 0n;
       try {
-        const id = await league.currentSeasonId();
+        const id = await league["currentSeasonId"]();
         currentId = Number(id);
         if (currentId === 0) currentId = 1;
         setSeasonId(currentId);
 
-        const season = await league.seasons(currentId);
+        const season = await league["seasons"](currentId);
         setSeasonStatus(Number(season.status));
+        sPrizePool = season.prizePool;
+        sTotalPoints = season.totalPoints;
         setPrizePool(Number(formatUnits(season.prizePool, 18)).toFixed(2));
         setTotalPoints(Number(season.totalPoints));
       } catch (e) {
         console.warn("Season data read:", e);
       }
 
-      // Check owner
+      // 2. Check Owner
       try {
-        const ownerAddr = await league.owner();
+        const ownerAddr = await league["owner"]();
         if (address && ownerAddr.toLowerCase() === address.toLowerCase()) {
           setIsOwner(true);
         }
       } catch (e) {}
 
+      // 3. User Wallet Balance & Active Roster
       if (address) {
-        // User claimable & wallet balance
-        const [claimable, bal] = await Promise.all([
-          league.claimable(address),
-          mrlv.balanceOf(address),
-        ]);
-        setClaimableRewards(Number(formatUnits(claimable, 18)).toFixed(2));
-        setMrlvBalance(Number(formatUnits(bal, 18)).toFixed(2));
-
-        // User roster
         try {
-          const picks = await rosterContract.getRoster(address, currentId);
+          const [claimable, bal] = await Promise.all([
+            league["claimable"](address),
+            mrlv["balanceOf"](address),
+          ]);
+          setClaimableRewards(Number(formatUnits(claimable, 18)).toFixed(2));
+          setMrlvBalance(Number(formatUnits(bal, 18)).toFixed(2));
+        } catch (e) {}
+
+        try {
+          const picks = await rosterContract["getRoster"](address, currentId);
           const formattedPicks: ScoutPick[] = picks.map((p: any) => ({
             trader: p.trader,
-            mrlvStaked: formatUnits(p.mrlvStaked, 18),
+            mrlvStaked: Number(formatUnits(p.mrlvStaked, 18)).toFixed(1),
             points: Number(p.points),
             flagged: Boolean(p.flagged),
           }));
@@ -136,6 +186,44 @@ function FantasyLeaguePage() {
           console.warn("Roster read:", e);
         }
       }
+
+      // 4. Fetch Participants & Leaderboard Standings
+      try {
+        const participants: string[] = await league["getSeasonParticipants"](currentId);
+        const entries: LeaderboardEntry[] = [];
+
+        for (const lp of participants) {
+          const [roster, allTime] = await Promise.all([
+            rosterContract["getRoster"](lp, currentId),
+            oracle["allTimeScoutScore"](lp).catch(() => 0n),
+          ]);
+
+          let lpSeasonPts = 0;
+          for (const pick of roster) {
+            lpSeasonPts += Number(pick.points);
+          }
+
+          let estPayout = "0.00";
+          if (sTotalPoints > 0n && sPrizePool > 0n && lpSeasonPts > 0) {
+            const share = (sPrizePool * BigInt(lpSeasonPts)) / sTotalPoints;
+            estPayout = Number(formatUnits(share, 18)).toFixed(2);
+          }
+
+          entries.push({
+            address: lp,
+            picksCount: roster.length,
+            seasonPoints: lpSeasonPts,
+            allTimeScore: Number(allTime),
+            estimatedPayout: estPayout,
+          });
+        }
+
+        // Sort leaderboard by season points descending
+        entries.sort((a, b) => b.seasonPoints - a.seasonPoints);
+        setLeaderboard(entries);
+      } catch (e) {
+        console.warn("Leaderboard fetch:", e);
+      }
     } catch (e) {
       console.error("Fantasy league fetch error:", e);
     } finally {
@@ -143,10 +231,32 @@ function FantasyLeaguePage() {
     }
   }, [provider, address]);
 
+  // Subscribe to live MEV Detected events
   React.useEffect(() => {
     fetchLeagueData();
-    if (provider) {
-      provider.on("block", fetchLeagueData);
+    if (!provider) return;
+
+    provider.on("block", fetchLeagueData);
+
+    try {
+      const analytics = getAnalyticsEmitter(provider);
+      const onMEV = (poolId: string, trader: string, riskScore: bigint, feeSurcharge: bigint) => {
+        const detection: LiveDetection = {
+          trader,
+          riskScore: Number(riskScore),
+          feeSurcharge: Number(feeSurcharge),
+          timestamp: new Date().toLocaleTimeString(),
+        };
+        setLiveDetections((prev) => [detection, ...prev.slice(0, 4)]);
+        toast.info(`⚡ MEV Intercepted from ${trader.slice(0, 6)}...${trader.slice(-4)} (Score: ${riskScore})`);
+      };
+
+      analytics.on("MEVDetected", onMEV);
+      return () => {
+        provider.off("block", fetchLeagueData);
+        analytics.off("MEVDetected", onMEV);
+      };
+    } catch (e) {
       return () => {
         provider.off("block", fetchLeagueData);
       };
@@ -160,14 +270,14 @@ function FantasyLeaguePage() {
     const league = getFantasyLeague(signer);
 
     toast.loading("Approving MRLV tokens for League...", { id: "draft" });
-    const currentAllowance = await mrlvToken.allowance(address, FANTASY_LEAGUE_ADDRESS);
+    const currentAllowance = await mrlvToken["allowance"](address, FANTASY_LEAGUE_ADDRESS);
     if (currentAllowance < amount) {
-      const approveTx = await mrlvToken.approve(FANTASY_LEAGUE_ADDRESS, parseUnits("1000000", 18));
+      const approveTx = await mrlvToken["approve"](FANTASY_LEAGUE_ADDRESS, parseUnits("1000000", 18));
       await approveTx.wait();
     }
 
     toast.loading("Drafting searcher and staking MRLV...", { id: "draft" });
-    const draftTx = await league.stakePick(searcherAddr, amount);
+    const draftTx = await league["stakePick"](searcherAddr, amount);
     await draftTx.wait();
 
     toast.success("Successfully drafted searcher into roster!", { id: "draft" });
@@ -182,13 +292,13 @@ function FantasyLeaguePage() {
       const mrlv = getMRLVToken(signer);
       const league = getFantasyLeague(signer);
 
-      const allowance = await mrlv.allowance(address, FANTASY_LEAGUE_ADDRESS);
+      const allowance = await mrlv["allowance"](address, FANTASY_LEAGUE_ADDRESS);
       if (allowance < amount) {
-        const txA = await mrlv.approve(FANTASY_LEAGUE_ADDRESS, parseUnits("1000000", 18));
+        const txA = await mrlv["approve"](FANTASY_LEAGUE_ADDRESS, parseUnits("1000000", 18));
         await txA.wait();
       }
 
-      const tx = await league.topUpPrizePool(amount);
+      const tx = await league["topUpPrizePool"](amount);
       await tx.wait();
       toast.success(`Added ${topUpAmount} MRLV to season prize pool!`, { id: "topup" });
       await fetchLeagueData();
@@ -201,18 +311,18 @@ function FantasyLeaguePage() {
   const handleClaimRewards = async () => {
     if (!signer) return;
     const league = getFantasyLeague(signer);
-    const tx = await league.claimRewards();
+    const tx = await league["claimRewards"]();
     await tx.wait();
     await fetchLeagueData();
   };
 
-  // Admin Season Phase Controls
+  // Admin Season Controls
   const handleStartSeason = async () => {
     if (!signer) return;
-    toast.loading("Starting new season...", { id: "season" });
+    toast.loading("Starting new season drafting...", { id: "season" });
     try {
       const league = getFantasyLeague(signer);
-      const tx = await league.startSeason();
+      const tx = await league["startSeason"]();
       await tx.wait();
       toast.success("Season drafting phase is now open!", { id: "season" });
       await fetchLeagueData();
@@ -223,10 +333,10 @@ function FantasyLeaguePage() {
 
   const handleLockSeason = async () => {
     if (!signer) return;
-    toast.loading("Locking season...", { id: "season" });
+    toast.loading("Locking season (Scoring begins)...", { id: "season" });
     try {
       const league = getFantasyLeague(signer);
-      const tx = await league.lockSeason();
+      const tx = await league["lockSeason"]();
       await tx.wait();
       toast.success("Season is now Active & Scoring!", { id: "season" });
       await fetchLeagueData();
@@ -240,7 +350,7 @@ function FantasyLeaguePage() {
     toast.loading("Settling season payouts...", { id: "season" });
     try {
       const league = getFantasyLeague(signer);
-      const tx = await league.settleSeason();
+      const tx = await league["settleSeason"]();
       await tx.wait();
       toast.success("Season settled! Rewards credited to winning LPs.", { id: "season" });
       await fetchLeagueData();
@@ -280,7 +390,7 @@ function FantasyLeaguePage() {
               Season #{seasonId}
             </span>
             <div className="mt-1 flex items-center gap-2">
-              <span className="size-2 rounded-full bg-primary animate-pulse" />
+              <span className={`size-2 rounded-full ${seasonStatus === 1 ? "bg-emerald-500 animate-pulse" : "bg-primary"}`} />
               <span className="font-semibold text-lg">{STATUS_LABELS[seasonStatus] || "Drafting"}</span>
             </div>
           </div>
@@ -296,7 +406,7 @@ function FantasyLeaguePage() {
 
           <div>
             <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
-              Total Points Scored
+              Total Season Points
             </span>
             <div className="mt-1 font-display text-2xl text-foreground">
               {totalPoints.toLocaleString()} pts
@@ -313,7 +423,7 @@ function FantasyLeaguePage() {
           </div>
         </div>
 
-        {/* Admin Controls */}
+        {/* Admin Season Controls */}
         {isOwner && (
           <div className="mt-6 pt-4 border-t border-border flex flex-wrap items-center gap-3">
             <span className="text-xs font-mono uppercase text-muted-foreground font-semibold">
@@ -323,14 +433,34 @@ function FantasyLeaguePage() {
               Open Drafting
             </Button>
             <Button size="sm" variant="secondary" onClick={handleLockSeason}>
-              Lock (Activate)
+              Lock (Activate Scoring)
             </Button>
             <Button size="sm" variant="default" onClick={handleSettleSeason}>
-              Settle Season
+              Settle Season Payouts
             </Button>
           </div>
         )}
       </motion.div>
+
+      {/* Live MEV Intercept Ticker */}
+      {liveDetections.length > 0 && (
+        <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/5 p-4 flex flex-wrap items-center justify-between gap-4 text-sm">
+          <div className="flex items-center gap-2 text-warning font-semibold">
+            <Zap className="size-4 animate-bounce" />
+            <span>Live MEV Interceptions:</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
+            {liveDetections.map((d, i) => (
+              <span key={i} className="px-2.5 py-1 rounded-lg bg-card border border-border flex items-center gap-1.5">
+                <span className="text-primary">{d.trader.slice(0, 6)}...{d.trader.slice(-4)}</span>
+                <span className="text-muted-foreground">|</span>
+                <span className="text-amber-400">Score: {d.riskScore}</span>
+                <span className="text-muted-foreground">({d.timestamp})</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {!address ? (
         <div className="mx-auto mt-14 grid place-items-center py-16 text-center rounded-2xl border border-dashed border-border p-12">
@@ -371,7 +501,7 @@ function FantasyLeaguePage() {
 
             {userRoster.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border p-8 text-center text-muted-foreground">
-                You haven't drafted any searchers for this season yet. Pick up to 3 below!
+                You haven't drafted any searchers for this season yet. Pick up to 3 below from the active draft board!
               </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-3">
@@ -404,7 +534,7 @@ function FantasyLeaguePage() {
                       <span className="text-muted-foreground">Status:</span>
                       <span className={pick.flagged ? "text-emerald-400 font-medium flex items-center gap-1" : "text-muted-foreground"}>
                         {pick.flagged ? <CheckCircle className="size-3.5" /> : null}
-                        {pick.flagged ? "Flagged MEV" : "Listening"}
+                        {pick.flagged ? "⚡ Flagged MEV" : "Listening for swaps"}
                       </span>
                     </div>
                   </motion.div>
@@ -413,16 +543,16 @@ function FantasyLeaguePage() {
             )}
           </section>
 
-          {/* Draft Board / Featured Searchers */}
+          {/* Draft Board / Active Searchers */}
           <section>
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-2xl font-semibold flex items-center gap-2">
                   <Flame className="size-6 text-amber-500" />
-                  Draft Board — Featured Searchers
+                  Draft Board — Active Searcher Bots
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Select a known MEV searcher to stake and add to your active squad.
+                  Draft active on-chain MEV searchers to stake MRLV and score points when they are detected.
                 </p>
               </div>
 
@@ -465,6 +595,7 @@ function FantasyLeaguePage() {
                         </span>
                       </div>
                       <h3 className="font-semibold text-lg text-foreground mb-1">{searcher.name}</h3>
+                      <p className="text-xs text-muted-foreground mb-3">{searcher.description}</p>
                       <p className="text-xs font-mono text-muted-foreground break-all bg-muted/30 p-2 rounded mb-4">
                         {searcher.address}
                       </p>
@@ -481,6 +612,8 @@ function FantasyLeaguePage() {
                           ? "Already Drafted"
                           : userRoster.length >= 3
                           ? "Roster Full (3/3)"
+                          : !isDrafting
+                          ? "Drafting Closed"
                           : `Draft & Stake ${stakeAmount} MRLV`}
                       </Button>
                     </div>
@@ -490,7 +623,7 @@ function FantasyLeaguePage() {
             </motion.div>
           </section>
 
-          {/* Custom Searcher Address Draft & Top-up */}
+          {/* Custom Searcher & Boost Prize Pool */}
           <section className="grid md:grid-cols-2 gap-6">
             <div className="rounded-2xl border border-border bg-card p-6 shadow-md">
               <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
@@ -498,7 +631,7 @@ function FantasyLeaguePage() {
                 Draft Custom Searcher Address
               </h3>
               <p className="text-sm text-muted-foreground mb-4">
-                Have an alpha bot or MEV searcher address? Stake on any address.
+                Have a specific MEV bot or trader address? Stake on any address.
               </p>
               <div className="space-y-3">
                 <input
@@ -548,6 +681,66 @@ function FantasyLeaguePage() {
                 </Button>
               </div>
             </div>
+          </section>
+
+          {/* Season Standings & Leaderboard Table */}
+          <section className="rounded-2xl border border-border bg-card p-6 shadow-md">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-semibold flex items-center gap-2">
+                  <Medal className="size-6 text-amber-400" />
+                  Season #{seasonId} Leaderboard & Scout Standings
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Rankings based on detected MEV activity across all drafted rosters.
+                </p>
+              </div>
+              <span className="text-xs font-mono px-3 py-1 bg-muted rounded-full text-muted-foreground">
+                {leaderboard.length} Participant(s)
+              </span>
+            </div>
+
+            {leaderboard.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border p-8 text-center text-muted-foreground text-sm">
+                No participants have drafted searchers in Season #{seasonId} yet. Be the first to draft above!
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-xs uppercase font-mono text-muted-foreground text-left">
+                      <th className="pb-3 pr-4">Rank</th>
+                      <th className="pb-3 pr-4">Scout (LP Address)</th>
+                      <th className="pb-3 pr-4">Picks</th>
+                      <th className="pb-3 pr-4">Season Points</th>
+                      <th className="pb-3 pr-4">All-Time Score</th>
+                      <th className="pb-3 text-right">Est. Payout</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border font-mono text-xs">
+                    {leaderboard.map((entry, idx) => (
+                      <tr key={entry.address} className={entry.address.toLowerCase() === address?.toLowerCase() ? "bg-primary/5 font-semibold" : ""}>
+                        <td className="py-3 pr-4 font-sans text-sm">
+                          {idx === 0 ? "🥇 #1" : idx === 1 ? "🥈 #2" : idx === 2 ? "🥉 #3" : `#${idx + 1}`}
+                        </td>
+                        <td className="py-3 pr-4 text-foreground">
+                          {entry.address.slice(0, 8)}...{entry.address.slice(-6)}
+                          {entry.address.toLowerCase() === address?.toLowerCase() && (
+                            <span className="ml-2 text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-sans">
+                              YOU
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 pr-4">{entry.picksCount} / 3</td>
+                        <td className="py-3 pr-4 font-semibold text-primary">{entry.seasonPoints} pts</td>
+                        <td className="py-3 pr-4 text-muted-foreground">{entry.allTimeScore} pts</td>
+                        <td className="py-3 text-right text-emerald-400 font-semibold">{entry.estimatedPayout} MRLV</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </div>
       )}
