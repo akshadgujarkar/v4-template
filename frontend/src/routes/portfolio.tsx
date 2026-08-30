@@ -47,6 +47,7 @@ function PortfolioPage() {
   const { provider, signer, address } = useWeb3();
 
   const [positions, setPositions] = useState<PositionData[]>([]);
+  const [removedPositions, setRemovedPositions] = useState<PositionData[]>([]);
   const [pendingPositions, setPendingPositions] = useState<PendingPosData[]>([]);
   const [claimableMrvl, setClaimableMrvl] = useState<number>(0);
   const [mrlvWalletBalance, setMrlvWalletBalance] = useState<string>("0");
@@ -89,28 +90,38 @@ function PortfolioPage() {
         console.warn("Active keys fetch error:", e);
       }
 
-      const posArray: PositionData[] = [];
+      const activePositions: PositionData[] = [];
+      const removedPosArray: PositionData[] = [];
       let idx = 0;
       while (true) {
         try {
           const pos = await loyaltyManager.userPositions(address, DEFAULT_POOL_ID, idx);
           if (!pos || pos.id === 0n) break;
           const amountFormatted = formatUnits(pos.amount, 18);
-          posArray.push({
+          const posKey = activeKeys[idx];
+          const posData: PositionData = {
             id: Number(pos.id),
             pool: "TK0 / TK1",
             liquidityUsd: Number(amountFormatted) * 2,
             startBlock: Number(pos.startBlock),
             tier: Number(pos.tier),
             amount: amountFormatted,
-            posKey: activeKeys[idx], // Match by index!
-          });
+            posKey: posKey,
+            isRemoved: !posKey,
+          };
+
+          if (posKey) {
+            activePositions.push(posData);
+          } else {
+            removedPosArray.push(posData);
+          }
           idx++;
         } catch (e) {
           break;
         }
       }
-      setPositions(posArray);
+      setPositions(activePositions);
+      setRemovedPositions(removedPosArray);
 
       // 2. Fetch pending escrow positions from MRLVHook
       try {
@@ -276,8 +287,16 @@ function PortfolioPage() {
     if (!signer || !address) throw new Error("Wallet not connected");
     const position = positions.find((p) => p.id === id);
     if (!position) throw new Error("Position not found");
-    if (!position.posKey) throw new Error("Active position key not found (sync error). Please refresh.");
-
+    if (!position.posKey) {
+      // Move this position to removed positions section
+      setPositions((prev) => prev.filter((p) => p.id !== id));
+      setRemovedPositions((prev) => {
+        if (prev.some((p) => p.id === id)) return prev;
+        return [...prev, { ...position, isRemoved: true }];
+      });
+      toast.info("Position liquidity was already removed from the pool. Moved to Removed Positions.");
+      return;
+    }
     toast.loading("Removing liquidity from pool...", { id: "removeLiq" });
     try {
       const hook = getMRLVHook(signer);
@@ -286,6 +305,10 @@ function PortfolioPage() {
       
       toast.success("Liquidity removed successfully!", { id: "removeLiq" });
       setPositions((prev) => prev.filter((p) => p.id !== id));
+      setRemovedPositions((prev) => {
+        if (prev.some((p) => p.id === id)) return prev;
+        return [...prev, { ...position, isRemoved: true, posKey: undefined }];
+      });
       await fetchData();
     } catch (e: any) {
       console.error(e);
@@ -438,6 +461,25 @@ function PortfolioPage() {
             )}
           </div>
 
+          {/* Removed Liquidity Positions */}
+          {removedPositions.length > 0 && (
+            <div>
+              <h2 className="text-xl font-semibold mb-4 flex items-center gap-2 text-muted-foreground">
+                <span>Removed Liquidity Positions ({removedPositions.length})</span>
+              </h2>
+              <div className="space-y-4">
+                {removedPositions.map((p) => (
+                  <PositionCard
+                    key={`removed-${p.id}`}
+                    position={p}
+                    currentBlock={currentBlock}
+                    isRemoved={true}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           {Number(poolDistributable) > 0 && (
             <div className="rounded-2xl border border-primary/30 bg-primary/5 p-6 flex items-center justify-between gap-4">
               <div>
@@ -507,7 +549,10 @@ function PortfolioPage() {
                 label="Active LP Units"
                 value={`${totalLiquidityUnits.toFixed(2)} LP`}
               />
-              <SummaryRow label="Open positions" value={positions.length.toString()} />
+              <SummaryRow label="Active positions" value={positions.length.toString()} />
+              {removedPositions.length > 0 && (
+                <SummaryRow label="Removed positions" value={removedPositions.length.toString()} />
+              )}
               <SummaryRow label="Pending escrow deposits" value={pendingPositions.length.toString()} />
               <SummaryRow label="Highest tier" value={`${maxTier} · ${TIER_MULTIPLIER[maxTier]}x`} />
               <SummaryRow label="Current block" value={currentBlock.toLocaleString()} />
