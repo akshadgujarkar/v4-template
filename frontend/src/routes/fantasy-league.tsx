@@ -1,7 +1,21 @@
 import * as React from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { motion } from "motion/react";
-import { Users, Trophy, Activity, Sparkles, Shield, AlertCircle, PlusCircle, CheckCircle, Flame, Radio, Zap, Medal } from "lucide-react";
+import {
+  Users,
+  Trophy,
+  Sparkles,
+  CheckCircle,
+  Flame,
+  Zap,
+  Medal,
+  RefreshCw,
+  PlusCircle,
+  Gift,
+  Coins,
+  ArrowRight,
+  Info
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/mrvl/section-label";
 import { WalletConnectButton } from "@/components/layout/wallet-connect-button";
@@ -14,7 +28,6 @@ import {
   getScoutPointsOracle,
   getAnalyticsEmitter,
   FANTASY_LEAGUE_ADDRESS,
-  SCOUT_ROSTER_ADDRESS,
 } from "@/lib/web3/contracts";
 import { TransactionButton } from "@/components/web3/TransactionButton";
 import { parseUnits, formatUnits } from "ethers";
@@ -113,6 +126,7 @@ function FantasyLeaguePage() {
   const [totalPoints, setTotalPoints] = React.useState<number>(0);
   const [claimableRewards, setClaimableRewards] = React.useState<string>("0");
   const [mrlvBalance, setMrlvBalance] = React.useState<string>("0");
+  const [userAllTimeScore, setUserAllTimeScore] = React.useState<number>(0);
 
   const [userRoster, setUserRoster] = React.useState<ScoutPick[]>([]);
   const [leaderboard, setLeaderboard] = React.useState<LeaderboardEntry[]>([]);
@@ -123,11 +137,11 @@ function FantasyLeaguePage() {
   const [customStake, setCustomStake] = React.useState("25.0");
   const [topUpAmount, setTopUpAmount] = React.useState("100.0");
   const [isOwner, setIsOwner] = React.useState(false);
-  const [isLoading, setIsLoading] = React.useState(false);
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
 
-  const fetchLeagueData = React.useCallback(async () => {
+  const fetchLeagueData = React.useCallback(async (showToast = false) => {
     if (!provider) return;
-    setIsLoading(true);
+    if (showToast) setIsRefreshing(true);
     try {
       const league = getFantasyLeague(provider);
       const rosterContract = getScoutRoster(provider);
@@ -159,18 +173,22 @@ function FantasyLeaguePage() {
         const ownerAddr = await league["owner"]();
         if (address && ownerAddr.toLowerCase() === address.toLowerCase()) {
           setIsOwner(true);
+        } else {
+          setIsOwner(false);
         }
       } catch (e) {}
 
-      // 3. User Wallet Balance & Active Roster
+      // 3. User Wallet Balance, Active Roster & All Time Score
       if (address) {
         try {
-          const [claimable, bal] = await Promise.all([
-            league["claimable"](address),
-            mrlv["balanceOf"](address),
+          const [claimable, bal, allTime] = await Promise.all([
+            league["claimable"](address).catch(() => 0n),
+            mrlv["balanceOf"](address).catch(() => 0n),
+            oracle["allTimeScoutScore"](address).catch(() => 0n),
           ]);
           setClaimableRewards(Number(formatUnits(claimable, 18)).toFixed(2));
           setMrlvBalance(Number(formatUnits(bal, 18)).toFixed(2));
+          setUserAllTimeScore(Number(allTime));
         } catch (e) {}
 
         try {
@@ -185,6 +203,10 @@ function FantasyLeaguePage() {
         } catch (e) {
           console.warn("Roster read:", e);
         }
+      } else {
+        setUserRoster([]);
+        setClaimableRewards("0");
+        setUserAllTimeScore(0);
       }
 
       // 4. Fetch Participants & Leaderboard Standings
@@ -194,7 +216,7 @@ function FantasyLeaguePage() {
 
         for (const lp of participants) {
           const [roster, allTime] = await Promise.all([
-            rosterContract["getRoster"](lp, currentId),
+            rosterContract["getRoster"](lp, currentId).catch(() => []),
             oracle["allTimeScoutScore"](lp).catch(() => 0n),
           ]);
 
@@ -224,19 +246,25 @@ function FantasyLeaguePage() {
       } catch (e) {
         console.warn("Leaderboard fetch:", e);
       }
+
+      if (showToast) {
+        toast.success("League state synced with on-chain data!");
+      }
     } catch (e) {
       console.error("Fantasy league fetch error:", e);
     } finally {
-      setIsLoading(false);
+      if (showToast) setIsRefreshing(false);
     }
   }, [provider, address]);
 
-  // Subscribe to live MEV Detected events
+  // Initial fetch and auto-polling every 2.5 seconds for real-time live scoring
   React.useEffect(() => {
     fetchLeagueData();
     if (!provider) return;
 
-    provider.on("block", fetchLeagueData);
+    const interval = setInterval(() => {
+      fetchLeagueData();
+    }, 2500);
 
     try {
       const analytics = getAnalyticsEmitter(provider);
@@ -249,16 +277,17 @@ function FantasyLeaguePage() {
         };
         setLiveDetections((prev) => [detection, ...prev.slice(0, 4)]);
         toast.info(`⚡ MEV Intercepted from ${trader.slice(0, 6)}...${trader.slice(-4)} (Score: ${riskScore})`);
+        fetchLeagueData();
       };
 
       analytics.on("MEVDetected", onMEV);
       return () => {
-        provider.off("block", fetchLeagueData);
+        clearInterval(interval);
         analytics.off("MEVDetected", onMEV);
       };
     } catch (e) {
       return () => {
-        provider.off("block", fetchLeagueData);
+        clearInterval(interval);
       };
     }
   }, [fetchLeagueData, provider]);
@@ -309,10 +338,12 @@ function FantasyLeaguePage() {
   };
 
   const handleClaimRewards = async () => {
-    if (!signer) return;
+    if (!signer) throw new Error("Wallet not connected");
     const league = getFantasyLeague(signer);
+    toast.loading("Claiming your MRLV prize rewards...", { id: "claim" });
     const tx = await league["claimRewards"]();
     await tx.wait();
+    toast.success("Rewards successfully transferred to your wallet!", { id: "claim" });
     await fetchLeagueData();
   };
 
@@ -324,7 +355,7 @@ function FantasyLeaguePage() {
       const league = getFantasyLeague(signer);
       const tx = await league["startSeason"]();
       await tx.wait();
-      toast.success("Season drafting phase is now open!", { id: "season" });
+      toast.success("New season drafting phase is now open!", { id: "season" });
       await fetchLeagueData();
     } catch (e: any) {
       toast.error(parseContractError(e), { id: "season" });
@@ -360,12 +391,24 @@ function FantasyLeaguePage() {
   };
 
   const isDrafting = seasonStatus === 0;
+  const isSettled = seasonStatus === 2;
+  const totalUserPoints = userRoster.reduce((sum, p) => sum + p.points, 0);
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-16 lg:py-24">
       <motion.div initial="hidden" animate="visible" variants={stagger}>
-        <motion.div variants={fadeInUp}>
+        <motion.div variants={fadeInUp} className="flex items-center justify-between">
           <SectionLabel pulse>Fantasy League</SectionLabel>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-xs font-mono text-muted-foreground hover:text-foreground flex items-center gap-1.5"
+            onClick={() => fetchLeagueData(true)}
+            disabled={isRefreshing}
+          >
+            <RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin text-primary" : ""}`} />
+            Sync State
+          </Button>
         </motion.div>
         <motion.h1 variants={fadeInUp} className="mt-6 text-4xl leading-[1.1] lg:text-6xl">
           Draft the <span className="text-gradient">Top Extractors</span>
@@ -390,7 +433,15 @@ function FantasyLeaguePage() {
               Season #{seasonId}
             </span>
             <div className="mt-1 flex items-center gap-2">
-              <span className={`size-2 rounded-full ${seasonStatus === 1 ? "bg-emerald-500 animate-pulse" : "bg-primary"}`} />
+              <span
+                className={`size-2.5 rounded-full ${
+                  seasonStatus === 1
+                    ? "bg-emerald-500 animate-pulse"
+                    : seasonStatus === 2
+                    ? "bg-amber-500"
+                    : "bg-primary"
+                }`}
+              />
               <span className="font-semibold text-lg">{STATUS_LABELS[seasonStatus] || "Drafting"}</span>
             </div>
           </div>
@@ -429,18 +480,94 @@ function FantasyLeaguePage() {
             <span className="text-xs font-mono uppercase text-muted-foreground font-semibold">
               Admin Season Controls:
             </span>
-            <Button size="sm" variant="outline" onClick={handleStartSeason}>
-              Open Drafting
-            </Button>
-            <Button size="sm" variant="secondary" onClick={handleLockSeason}>
-              Lock (Activate Scoring)
-            </Button>
-            <Button size="sm" variant="default" onClick={handleSettleSeason}>
-              Settle Season Payouts
-            </Button>
+            {seasonStatus === 2 ? (
+              <Button size="sm" variant="default" onClick={handleStartSeason} className="shadow-lg shadow-primary/20">
+                <Sparkles className="size-3.5 mr-1" />
+                Start Next Season #{seasonId + 1}
+              </Button>
+            ) : seasonStatus === 0 ? (
+              <Button size="sm" variant="secondary" onClick={handleLockSeason}>
+                <Flame className="size-3.5 mr-1 text-amber-400" />
+                Lock & Start Scoring (Active)
+              </Button>
+            ) : (
+              <Button size="sm" variant="default" onClick={handleSettleSeason} className="shadow-lg shadow-primary/20">
+                <Trophy className="size-3.5 mr-1" />
+                Settle Season Payouts
+              </Button>
+            )}
+
+            <div className="ml-auto flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={handleStartSeason} title="Open a new drafting season">
+                Force New Season
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleSettleSeason} title="Settle current active season">
+                Force Settle
+              </Button>
+            </div>
           </div>
         )}
       </motion.div>
+
+      {/* DEDICATED SETTLEMENT & CLAIM REWARDS HERO CARD */}
+      {(isSettled || Number(claimableRewards) > 0) && (
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={fadeInUp}
+          className="mt-8 rounded-2xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-primary/10 to-amber-500/5 p-6 shadow-xl relative overflow-hidden"
+        >
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Gift className="size-6 text-amber-400 animate-bounce" />
+                <h2 className="text-2xl font-bold text-foreground">
+                  {Number(claimableRewards) > 0
+                    ? "🏆 Prize Rewards Ready to Claim!"
+                    : isSettled
+                    ? `Season #${seasonId} Settled`
+                    : "Available Rewards"}
+                </h2>
+              </div>
+              <p className="text-sm text-muted-foreground max-w-xl">
+                {Number(claimableRewards) > 0
+                  ? `Congratulations! Your drafted searchers scored ${totalUserPoints} points. You have earned a proportional share of the season prize pool.`
+                  : isSettled && totalPoints === 0
+                  ? `Season #${seasonId} concluded with 0 points scored. The ${prizePool} MRLV prize pool will automatically carry over to Season #${seasonId + 1}.`
+                  : isSettled
+                  ? `Season #${seasonId} payouts have been calculated and distributed to winning scouts.`
+                  : "Track and claim your earned prize pool rewards directly to your wallet."}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end">
+              <div className="text-right">
+                <span className="text-xs font-mono uppercase text-muted-foreground">Your Claimable Winnings</span>
+                <div className="text-3xl font-display font-bold text-amber-400">
+                  {claimableRewards} <span className="text-sm font-sans text-foreground">MRLV</span>
+                </div>
+              </div>
+
+              {Number(claimableRewards) > 0 ? (
+                <TransactionButton
+                  action={handleClaimRewards}
+                  onSuccess={() => fetchLeagueData(true)}
+                  successMessage="Successfully claimed your prize rewards!"
+                  size="lg"
+                  className="bg-amber-500 hover:bg-amber-600 text-black font-bold shadow-lg shadow-amber-500/30"
+                >
+                  <Sparkles className="size-4 mr-1" />
+                  Claim {claimableRewards} MRLV
+                </TransactionButton>
+              ) : (
+                <Button disabled variant="outline" size="default" className="opacity-70">
+                  {isSettled ? "Nothing Claimable" : "No Winnings Yet"}
+                </Button>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Live MEV Intercept Ticker */}
       {liveDetections.length > 0 && (
@@ -451,7 +578,7 @@ function FantasyLeaguePage() {
           </div>
           <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
             {liveDetections.map((d, i) => (
-              <span key={i} className="px-2.5 py-1 rounded-lg bg-card border border-border flex items-center gap-1.5">
+              <span key={i} className="px-2.5 py-1 rounded-lg bg-card border border-border flex items-center gap-1.5 shadow-sm">
                 <span className="text-primary">{d.trader.slice(0, 6)}...{d.trader.slice(-4)}</span>
                 <span className="text-muted-foreground">|</span>
                 <span className="text-amber-400">Score: {d.riskScore}</span>
@@ -482,26 +609,31 @@ function FantasyLeaguePage() {
                   Your Drafted Roster ({userRoster.length} / 3 max)
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Searchers you've staked on for Season #{seasonId}.
+                  Searchers you've staked on for Season #{seasonId}. Total Points Scored:{" "}
+                  <strong className="text-foreground">{totalUserPoints} pts</strong> | All-Time Score:{" "}
+                  <strong className="text-primary">{userAllTimeScore} pts</strong>
                 </p>
               </div>
 
               {Number(claimableRewards) > 0 && (
                 <TransactionButton
                   action={handleClaimRewards}
-                  onSuccess={fetchLeagueData}
+                  onSuccess={() => fetchLeagueData(true)}
                   successMessage="Claimed fantasy league rewards!"
                   size="sm"
+                  className="bg-amber-500 hover:bg-amber-600 text-black font-semibold"
                 >
                   <Sparkles className="size-4" />
-                  Claim {claimableRewards} MRLV Rewards
+                  Claim {claimableRewards} MRLV
                 </TransactionButton>
               )}
             </div>
 
             {userRoster.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border p-8 text-center text-muted-foreground">
-                You haven't drafted any searchers for this season yet. Pick up to 3 below from the active draft board!
+                {isSettled
+                  ? "You did not draft any searchers in this concluded season. Draft searchers in the next season!"
+                  : "You haven't drafted any searchers for this season yet. Pick up to 3 below from the active draft board!"}
               </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-3">
@@ -509,14 +641,22 @@ function FantasyLeaguePage() {
                   <motion.div
                     key={i}
                     variants={fadeInUp}
-                    className="rounded-2xl border border-border bg-card p-6 shadow-md relative overflow-hidden"
+                    className={`rounded-2xl border p-6 shadow-md relative overflow-hidden transition-all ${
+                      pick.flagged
+                        ? "border-amber-500/50 bg-card shadow-amber-500/5"
+                        : "border-border bg-card"
+                    }`}
                   >
                     <div className="flex justify-between items-start mb-3">
                       <div className="flex items-center gap-2">
-                        <Trophy className="text-primary size-5" />
+                        <Trophy className={`size-5 ${pick.points > 0 ? "text-amber-400" : "text-primary"}`} />
                         <span className="font-semibold text-base">Pick #{i + 1}</span>
                       </div>
-                      <span className="font-mono bg-primary/10 text-primary px-2.5 py-1 rounded-full text-xs font-semibold">
+                      <span className={`font-mono px-2.5 py-1 rounded-full text-xs font-bold ${
+                        pick.points > 0
+                          ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                          : "bg-primary/10 text-primary"
+                      }`}>
                         {pick.points} pts
                       </span>
                     </div>
@@ -530,11 +670,11 @@ function FantasyLeaguePage() {
                       <span className="font-medium text-foreground">{pick.mrlvStaked} MRLV</span>
                     </div>
 
-                    <div className="flex justify-between text-sm mt-1">
-                      <span className="text-muted-foreground">Status:</span>
-                      <span className={pick.flagged ? "text-emerald-400 font-medium flex items-center gap-1" : "text-muted-foreground"}>
-                        {pick.flagged ? <CheckCircle className="size-3.5" /> : null}
-                        {pick.flagged ? "⚡ Flagged MEV" : "Listening for swaps"}
+                    <div className="flex justify-between text-sm mt-2">
+                      <span className="text-muted-foreground">Live Status:</span>
+                      <span className={pick.flagged ? "text-amber-400 font-semibold flex items-center gap-1" : "text-muted-foreground flex items-center gap-1"}>
+                        {pick.flagged ? <CheckCircle className="size-3.5 text-amber-400" /> : <Info className="size-3.5 text-muted-foreground" />}
+                        {pick.flagged ? `⚡ Caught MEV (+${pick.points} pts)` : "Watching for trades"}
                       </span>
                     </div>
                   </motion.div>
@@ -576,14 +716,20 @@ function FantasyLeaguePage() {
               className="grid gap-6 md:grid-cols-3"
             >
               {FEATURED_SEARCHERS.map((searcher, i) => {
-                const isDrafted = userRoster.some(
+                const draftedPick = userRoster.find(
                   (p) => p.trader.toLowerCase() === searcher.address.toLowerCase()
                 );
+                const isDrafted = Boolean(draftedPick);
+
                 return (
                   <motion.div
                     key={i}
                     variants={fadeInUp}
-                    className="rounded-2xl border border-border bg-card p-6 shadow-md hover:border-primary/50 transition-all flex flex-col justify-between"
+                    className={`rounded-2xl border bg-card p-6 shadow-md transition-all flex flex-col justify-between ${
+                      isDrafted
+                        ? "border-primary ring-1 ring-primary/40 bg-primary/5"
+                        : "border-border hover:border-primary/50"
+                    }`}
                   >
                     <div>
                       <div className="flex justify-between items-center mb-2">
@@ -594,7 +740,14 @@ function FantasyLeaguePage() {
                           {searcher.reputation}
                         </span>
                       </div>
-                      <h3 className="font-semibold text-lg text-foreground mb-1">{searcher.name}</h3>
+                      <h3 className="font-semibold text-lg text-foreground mb-1 flex items-center justify-between">
+                        <span>{searcher.name}</span>
+                        {isDrafted && (
+                          <span className="text-xs font-mono px-2 py-0.5 bg-primary/20 text-primary rounded font-bold">
+                            {draftedPick?.points || 0} pts
+                          </span>
+                        )}
+                      </h3>
                       <p className="text-xs text-muted-foreground mb-3">{searcher.description}</p>
                       <p className="text-xs font-mono text-muted-foreground break-all bg-muted/30 p-2 rounded mb-4">
                         {searcher.address}
@@ -609,11 +762,13 @@ function FantasyLeaguePage() {
                         variant={isDrafted ? "secondary" : "default"}
                       >
                         {isDrafted
-                          ? "Already Drafted"
+                          ? `Drafted (${draftedPick?.points || 0} pts)`
                           : userRoster.length >= 3
                           ? "Roster Full (3/3)"
-                          : !isDrafting
-                          ? "Drafting Closed"
+                          : seasonStatus === 1
+                          ? "Scoring Active (Locked)"
+                          : seasonStatus === 2
+                          ? "Season Settled"
                           : `Draft & Stake ${stakeAmount} MRLV`}
                       </Button>
                     </div>
@@ -662,7 +817,7 @@ function FantasyLeaguePage() {
 
             <div className="rounded-2xl border border-border bg-card p-6 shadow-md">
               <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
-                <Trophy className="size-5 text-amber-400" />
+                <Coins className="size-5 text-amber-400" />
                 Boost Prize Pool
               </h3>
               <p className="text-sm text-muted-foreground mb-4">

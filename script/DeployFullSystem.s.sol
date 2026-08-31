@@ -188,6 +188,9 @@ contract DeployFullSystem is Script {
 
         ScoutPointsOracle oracle = new ScoutPointsOracle(deployer, roster);
 
+        // Configure oracle in roster through league
+        league.setPointsOracle(address(oracle));
+
         console2.log("ScoutRoster:", address(roster));
         console2.log("MEVScoutLeague:", address(league));
         console2.log("ScoutPointsOracle:", address(oracle));

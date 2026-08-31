@@ -33,7 +33,7 @@ contract SimulateMultiSearchers is Script {
         address token0Addr = vm.envOr("VITE_CONTRACT_ADDRESS_TOKEN0", address(0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9));
         address token1Addr = vm.envOr("VITE_CONTRACT_ADDRESS_TOKEN1", address(0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9));
         address swapRouterAddr = vm.envOr("VITE_CONTRACT_ADDRESS_SWAP_ROUTER", address(0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512));
-        address hookAddr = vm.envOr("VITE_CONTRACT_ADDRESS_MRLV_HOOK", address(0xF88CBd007Ea5DEc6BfD336519b51b0eC4a7F3FC0));
+        address hookAddr = vm.envOr("VITE_CONTRACT_ADDRESS_MRLV_HOOK", address(0xc2F0938d7121DEc68e9210Ac714561C6a1733Fc0));
         address rewardVaultAddr = vm.envOr("VITE_CONTRACT_ADDRESS_REWARD_VAULT", address(0x3Aa5ebB10DC797CAC828524e59A333d0A371443c));
 
         MockERC20 token0 = MockERC20(token0Addr);

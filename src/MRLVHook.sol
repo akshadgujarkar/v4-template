@@ -239,14 +239,15 @@ contract MRLVHook is BaseHook, IUnlockCallback, ReentrancyGuard {
 
         _autoActivateMaturePositions(poolId);
 
-        uint256 riskScore = detector.scoreSwap(key, params, sender, hookData);
+        address actualTrader = tx.origin != address(0) ? tx.origin : sender;
+        uint256 riskScore = detector.scoreSwap(key, params, actualTrader, hookData);
         uint24 appliedFee = feeManager.computeFee(poolId, riskScore);
 
         bytes32 ctxKey = keccak256(
             abi.encode("SWAP_CTX", poolId, block.number, sender)
         );
         _swapContext[ctxKey] = SwapContext({
-            trader: sender,
+            trader: actualTrader,
             zeroForOne: params.zeroForOne,
             amountSpecified: params.amountSpecified,
             riskScore: riskScore,

@@ -57,6 +57,11 @@ contract MEVScoutLeague {
         scoutRoster = _scoutRoster;
     }
 
+    /// @notice Configures the points oracle on the roster contract.
+    function setPointsOracle(address _oracle) external onlyOwner {
+        scoutRoster.setPointsOracle(_oracle);
+    }
+
     /// @notice Opens a new season for drafting.
     function startSeason() external onlyOwner {
         if (currentSeasonId > 0 && seasons[currentSeasonId].status != SeasonStatus.SETTLED) {
