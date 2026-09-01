@@ -66,10 +66,11 @@ const MEV_SCOUT_LEAGUE_ABI = [
 // EVENT / TRANSACTION QUEUE STATE
 // =========================================================
 
-const processedEventKeys = new Set();
 const eventQueue = [];
 let isProcessing = false;
 let historicalScanComplete = false;
+let eventSequence = 0;
+let lastPolledBlock = 0;
 
 // =========================================================
 // HELPERS
@@ -88,12 +89,8 @@ function enqueueMEVEvent(
     feeSurcharge,
     eventKey
 ) {
-    if (processedEventKeys.has(eventKey)) {
-        console.log(`↩️ Skipping duplicate event: ${eventKey}`);
-        return;
-    }
-
-    processedEventKeys.add(eventKey);
+    eventSequence++;
+    const dispatchKey = `${eventKey || "live"}-seq${eventSequence}`;
 
     eventQueue.push({
         oracle,
@@ -102,11 +99,11 @@ function enqueueMEVEvent(
         trader,
         riskScore,
         feeSurcharge,
-        eventKey
+        eventKey: dispatchKey
     });
 
     console.log(
-        `📥 Event queued: ${eventKey} | Queue size: ${eventQueue.length}`
+        `📥 Event queued [${dispatchKey}] | Trader: ${trader} | RiskScore: ${riskScore} | Queue size: ${eventQueue.length}`
     );
 
     processQueue().catch((error) => {
@@ -178,6 +175,13 @@ async function handleMEVEvent({
 
     try {
         const currentSeasonId = await league.currentSeasonId();
+        if (Number(currentSeasonId) === 0) {
+            console.log(
+                "ℹ️ Fantasy League Season #1 has not been started yet by the deployer. Skipping."
+            );
+            return;
+        }
+
         const rawParticipants = await league.getSeasonParticipants(currentSeasonId);
         const participants = Array.from(rawParticipants);
 
@@ -290,6 +294,7 @@ async function main() {
     try {
         const currentBlock = await provider.getBlockNumber();
         const fromBlock = Math.max(0, currentBlock - 2000);
+        lastPolledBlock = currentBlock;
         console.log(`Scanning blocks ${fromBlock} → ${currentBlock}`);
 
         const filter = analyticsEmitter.filters.MEVDetected();
@@ -361,30 +366,34 @@ async function main() {
     setInterval(async () => {
         try {
             const currentBlock = await provider.getBlockNumber();
-            const fromBlock = Math.max(0, currentBlock - 10);
-            const filter = analyticsEmitter.filters.MEVDetected();
-            const logs = await analyticsEmitter.queryFilter(
-                filter,
-                fromBlock,
-                "latest"
-            );
+            if (currentBlock > lastPolledBlock) {
+                const fromBlock = lastPolledBlock + 1;
+                lastPolledBlock = currentBlock;
 
-            for (const log of logs) {
-                try {
-                    const parsed = analyticsEmitter.interface.parseLog(log);
-                    if (!parsed) continue;
+                const filter = analyticsEmitter.filters.MEVDetected();
+                const logs = await analyticsEmitter.queryFilter(
+                    filter,
+                    fromBlock,
+                    currentBlock
+                );
 
-                    const eventKey = getEventKey(log);
-                    enqueueMEVEvent(
-                        oracle,
-                        league,
-                        wallet,
-                        parsed.args.trader,
-                        parsed.args.riskScore,
-                        parsed.args.feeSurcharge,
-                        eventKey
-                    );
-                } catch (error) {}
+                for (const log of logs) {
+                    try {
+                        const parsed = analyticsEmitter.interface.parseLog(log);
+                        if (!parsed) continue;
+
+                        const eventKey = getEventKey(log);
+                        enqueueMEVEvent(
+                            oracle,
+                            league,
+                            wallet,
+                            parsed.args.trader,
+                            parsed.args.riskScore,
+                            parsed.args.feeSurcharge,
+                            eventKey
+                        );
+                    } catch (error) {}
+                }
             }
         } catch (error) {}
     }, 3000);

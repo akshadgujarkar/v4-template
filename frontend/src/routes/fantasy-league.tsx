@@ -120,9 +120,9 @@ const STATUS_LABELS = ["Drafting Open", "Active Round", "Season Settled"];
 function FantasyLeaguePage() {
   const { provider, signer, address } = useWeb3();
 
-  const [seasonId, setSeasonId] = React.useState<number>(1);
-  const [seasonStatus, setSeasonStatus] = React.useState<number>(0);
-  const [prizePool, setPrizePool] = React.useState<string>("0");
+  const [seasonId, setSeasonId] = React.useState<number>(0);
+  const [seasonStatus, setSeasonStatus] = React.useState<number>(-1); // -1 = Not Started, 0 = Drafting, 1 = Active, 2 = Settled
+  const [prizePool, setPrizePool] = React.useState<string>("0.00");
   const [totalPoints, setTotalPoints] = React.useState<number>(0);
   const [claimableRewards, setClaimableRewards] = React.useState<string>("0");
   const [mrlvBalance, setMrlvBalance] = React.useState<string>("0");
@@ -149,21 +149,26 @@ function FantasyLeaguePage() {
       const mrlv = getMRLVToken(provider);
 
       // 1. Current Season Details
-      let currentId = 1;
+      let currentId = 0;
       let sPrizePool = 0n;
       let sTotalPoints = 0n;
       try {
         const id = await league["currentSeasonId"]();
         currentId = Number(id);
-        if (currentId === 0) currentId = 1;
         setSeasonId(currentId);
 
-        const season = await league["seasons"](currentId);
-        setSeasonStatus(Number(season.status));
-        sPrizePool = season.prizePool;
-        sTotalPoints = season.totalPoints;
-        setPrizePool(Number(formatUnits(season.prizePool, 18)).toFixed(2));
-        setTotalPoints(Number(season.totalPoints));
+        if (currentId === 0) {
+          setSeasonStatus(-1);
+          setPrizePool("0.00");
+          setTotalPoints(0);
+        } else {
+          const season = await league["seasons"](currentId);
+          setSeasonStatus(Number(season.status));
+          sPrizePool = season.prizePool;
+          sTotalPoints = season.totalPoints;
+          setPrizePool(Number(formatUnits(season.prizePool, 18)).toFixed(2));
+          setTotalPoints(Number(season.totalPoints));
+        }
       } catch (e) {
         console.warn("Season data read:", e);
       }
@@ -191,17 +196,21 @@ function FantasyLeaguePage() {
           setUserAllTimeScore(Number(allTime));
         } catch (e) {}
 
-        try {
-          const picks = await rosterContract["getRoster"](address, currentId);
-          const formattedPicks: ScoutPick[] = picks.map((p: any) => ({
-            trader: p.trader,
-            mrlvStaked: Number(formatUnits(p.mrlvStaked, 18)).toFixed(1),
-            points: Number(p.points),
-            flagged: Boolean(p.flagged),
-          }));
-          setUserRoster(formattedPicks);
-        } catch (e) {
-          console.warn("Roster read:", e);
+        if (currentId > 0) {
+          try {
+            const picks = await rosterContract["getRoster"](address, currentId);
+            const formattedPicks: ScoutPick[] = picks.map((p: any) => ({
+              trader: p.trader,
+              mrlvStaked: Number(formatUnits(p.mrlvStaked, 18)).toFixed(1),
+              points: Number(p.points),
+              flagged: Boolean(p.flagged),
+            }));
+            setUserRoster(formattedPicks);
+          } catch (e) {
+            console.warn("Roster read:", e);
+          }
+        } else {
+          setUserRoster([]);
         }
       } else {
         setUserRoster([]);
@@ -210,41 +219,45 @@ function FantasyLeaguePage() {
       }
 
       // 4. Fetch Participants & Leaderboard Standings
-      try {
-        const participants: string[] = await league["getSeasonParticipants"](currentId);
-        const entries: LeaderboardEntry[] = [];
+      if (currentId > 0) {
+        try {
+          const participants: string[] = await league["getSeasonParticipants"](currentId);
+          const entries: LeaderboardEntry[] = [];
 
-        for (const lp of participants) {
-          const [roster, allTime] = await Promise.all([
-            rosterContract["getRoster"](lp, currentId).catch(() => []),
-            oracle["allTimeScoutScore"](lp).catch(() => 0n),
-          ]);
+          for (const lp of participants) {
+            const [roster, allTime] = await Promise.all([
+              rosterContract["getRoster"](lp, currentId).catch(() => []),
+              oracle["allTimeScoutScore"](lp).catch(() => 0n),
+            ]);
 
-          let lpSeasonPts = 0;
-          for (const pick of roster) {
-            lpSeasonPts += Number(pick.points);
+            let lpSeasonPts = 0;
+            for (const pick of roster) {
+              lpSeasonPts += Number(pick.points);
+            }
+
+            let estPayout = "0.00";
+            if (sTotalPoints > 0n && sPrizePool > 0n && lpSeasonPts > 0) {
+              const share = (sPrizePool * BigInt(lpSeasonPts)) / sTotalPoints;
+              estPayout = Number(formatUnits(share, 18)).toFixed(2);
+            }
+
+            entries.push({
+              address: lp,
+              picksCount: roster.length,
+              seasonPoints: lpSeasonPts,
+              allTimeScore: Number(allTime),
+              estimatedPayout: estPayout,
+            });
           }
 
-          let estPayout = "0.00";
-          if (sTotalPoints > 0n && sPrizePool > 0n && lpSeasonPts > 0) {
-            const share = (sPrizePool * BigInt(lpSeasonPts)) / sTotalPoints;
-            estPayout = Number(formatUnits(share, 18)).toFixed(2);
-          }
-
-          entries.push({
-            address: lp,
-            picksCount: roster.length,
-            seasonPoints: lpSeasonPts,
-            allTimeScore: Number(allTime),
-            estimatedPayout: estPayout,
-          });
+          // Sort leaderboard by season points descending
+          entries.sort((a, b) => b.seasonPoints - a.seasonPoints);
+          setLeaderboard(entries);
+        } catch (e) {
+          console.warn("Leaderboard fetch:", e);
         }
-
-        // Sort leaderboard by season points descending
-        entries.sort((a, b) => b.seasonPoints - a.seasonPoints);
-        setLeaderboard(entries);
-      } catch (e) {
-        console.warn("Leaderboard fetch:", e);
+      } else {
+        setLeaderboard([]);
       }
 
       if (showToast) {
@@ -390,8 +403,9 @@ function FantasyLeaguePage() {
     }
   };
 
-  const isDrafting = seasonStatus === 0;
-  const isSettled = seasonStatus === 2;
+  const isNotStarted = seasonId === 0;
+  const isDrafting = seasonId > 0 && seasonStatus === 0;
+  const isSettled = seasonId > 0 && seasonStatus === 2;
   const totalUserPoints = userRoster.reduce((sum, p) => sum + p.points, 0);
 
   return (
@@ -430,19 +444,23 @@ function FantasyLeaguePage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 items-center">
           <div>
             <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
-              Season #{seasonId}
+              {isNotStarted ? "Season Status" : `Season #${seasonId}`}
             </span>
             <div className="mt-1 flex items-center gap-2">
               <span
                 className={`size-2.5 rounded-full ${
-                  seasonStatus === 1
+                  isNotStarted
+                    ? "bg-amber-400"
+                    : seasonStatus === 1
                     ? "bg-emerald-500 animate-pulse"
                     : seasonStatus === 2
                     ? "bg-amber-500"
                     : "bg-primary"
                 }`}
               />
-              <span className="font-semibold text-lg">{STATUS_LABELS[seasonStatus] || "Drafting"}</span>
+              <span className="font-semibold text-lg">
+                {isNotStarted ? "Not Started (Season 1)" : STATUS_LABELS[seasonStatus] || "Drafting"}
+              </span>
             </div>
           </div>
 
@@ -480,7 +498,12 @@ function FantasyLeaguePage() {
             <span className="text-xs font-mono uppercase text-muted-foreground font-semibold">
               Admin Season Controls:
             </span>
-            {seasonStatus === 2 ? (
+            {isNotStarted ? (
+              <Button size="sm" variant="default" onClick={handleStartSeason} className="shadow-lg shadow-primary/20 bg-primary hover:bg-primary/90">
+                <Sparkles className="size-3.5 mr-1" />
+                Start Season #1 (Open Drafting)
+              </Button>
+            ) : seasonStatus === 2 ? (
               <Button size="sm" variant="default" onClick={handleStartSeason} className="shadow-lg shadow-primary/20">
                 <Sparkles className="size-3.5 mr-1" />
                 Start Next Season #{seasonId + 1}
@@ -499,15 +522,50 @@ function FantasyLeaguePage() {
 
             <div className="ml-auto flex items-center gap-2">
               <Button size="sm" variant="outline" onClick={handleStartSeason} title="Open a new drafting season">
-                Force New Season
+                {isNotStarted ? "Start Season 1" : "Force New Season"}
               </Button>
-              <Button size="sm" variant="outline" onClick={handleSettleSeason} title="Settle current active season">
+              <Button size="sm" variant="outline" onClick={handleSettleSeason} disabled={isNotStarted} title="Settle current active season">
                 Force Settle
               </Button>
             </div>
           </div>
         )}
       </motion.div>
+
+      {/* Unstarted Season Prompt Banner */}
+      {isNotStarted && (
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={fadeInUp}
+          className="mt-6 rounded-2xl border border-primary/30 bg-primary/5 p-6 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
+        >
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Sparkles className="size-5 text-primary" />
+              <h3 className="font-semibold text-foreground text-base">
+                Season 1 Drafting Has Not Started Yet
+              </h3>
+            </div>
+            <p className="text-sm text-muted-foreground max-w-2xl">
+              {isOwner
+                ? "As the contract deployer and league owner, click 'Start Season 1' to open the drafting window for scouts and start accepting picks."
+                : "The contract is deployed, but Season 1 has not been started by the deployer yet. Drafting will open as soon as the deployer starts Season 1."}
+            </p>
+          </div>
+          {isOwner && (
+            <Button
+              size="default"
+              variant="default"
+              onClick={handleStartSeason}
+              className="shadow-lg shadow-primary/30 font-semibold shrink-0"
+            >
+              <Sparkles className="size-4 mr-1.5" />
+              Start Season 1
+            </Button>
+          )}
+        </motion.div>
+      )}
 
       {/* DEDICATED SETTLEMENT & CLAIM REWARDS HERO CARD */}
       {(isSettled || Number(claimableRewards) > 0) && (
@@ -609,9 +667,15 @@ function FantasyLeaguePage() {
                   Your Drafted Roster ({userRoster.length} / 3 max)
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Searchers you've staked on for Season #{seasonId}. Total Points Scored:{" "}
-                  <strong className="text-foreground">{totalUserPoints} pts</strong> | All-Time Score:{" "}
-                  <strong className="text-primary">{userAllTimeScore} pts</strong>
+                  {isNotStarted
+                    ? "Season 1 has not started yet. Draft picks will appear here once you draft searchers."
+                    : `Searchers you've staked on for Season #${seasonId}. Total Points Scored: `}
+                  {!isNotStarted && (
+                    <>
+                      <strong className="text-foreground">{totalUserPoints} pts</strong> | All-Time Score:{" "}
+                      <strong className="text-primary">{userAllTimeScore} pts</strong>
+                    </>
+                  )}
                 </p>
               </div>
 
@@ -631,7 +695,9 @@ function FantasyLeaguePage() {
 
             {userRoster.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border p-8 text-center text-muted-foreground">
-                {isSettled
+                {isNotStarted
+                  ? "Season 1 drafting has not been opened yet by the deployer. Once Season 1 starts, you can draft up to 3 searchers below!"
+                  : isSettled
                   ? "You did not draft any searchers in this concluded season. Draft searchers in the next season!"
                   : "You haven't drafted any searchers for this season yet. Pick up to 3 below from the active draft board!"}
               </div>
@@ -704,6 +770,7 @@ function FantasyLeaguePage() {
                   onChange={(e) => setStakeAmount(e.target.value)}
                   className="w-24 px-2 py-1 text-sm bg-muted rounded border border-border text-foreground font-mono"
                   placeholder="50.0"
+                  disabled={!isDrafting}
                 />
               </div>
             </div>
@@ -765,6 +832,8 @@ function FantasyLeaguePage() {
                           ? `Drafted (${draftedPick?.points || 0} pts)`
                           : userRoster.length >= 3
                           ? "Roster Full (3/3)"
+                          : isNotStarted
+                          ? "Season 1 Not Started"
                           : seasonStatus === 1
                           ? "Scoring Active (Locked)"
                           : seasonStatus === 2
@@ -795,6 +864,7 @@ function FantasyLeaguePage() {
                   value={customSearcher}
                   onChange={(e) => setCustomSearcher(e.target.value)}
                   className="w-full px-3 py-2 bg-muted rounded-xl border border-border text-sm font-mono"
+                  disabled={!isDrafting}
                 />
                 <div className="flex gap-2">
                   <input
@@ -803,13 +873,14 @@ function FantasyLeaguePage() {
                     value={customStake}
                     onChange={(e) => setCustomStake(e.target.value)}
                     className="w-32 px-3 py-2 bg-muted rounded-xl border border-border text-sm font-mono"
+                    disabled={!isDrafting}
                   />
                   <Button
                     onClick={() => handleDraft(customSearcher, customStake)}
                     disabled={!isDrafting || !customSearcher || userRoster.length >= 3}
                     className="flex-1"
                   >
-                    Draft Searcher
+                    {isNotStarted ? "Season Not Started" : "Draft Searcher"}
                   </Button>
                 </div>
               </div>
@@ -830,9 +901,10 @@ function FantasyLeaguePage() {
                   value={topUpAmount}
                   onChange={(e) => setTopUpAmount(e.target.value)}
                   className="w-32 px-3 py-2 bg-muted rounded-xl border border-border text-sm font-mono"
+                  disabled={isNotStarted || isSettled}
                 />
-                <Button onClick={handleTopUpPrizePool} variant="secondary" className="flex-1">
-                  Add {topUpAmount} MRLV to Pool
+                <Button onClick={handleTopUpPrizePool} disabled={isNotStarted || isSettled} variant="secondary" className="flex-1">
+                  {isNotStarted ? "Season Not Started" : `Add ${topUpAmount} MRLV to Pool`}
                 </Button>
               </div>
             </div>
@@ -844,7 +916,7 @@ function FantasyLeaguePage() {
               <div>
                 <h2 className="text-2xl font-semibold flex items-center gap-2">
                   <Medal className="size-6 text-amber-400" />
-                  Season #{seasonId} Leaderboard & Scout Standings
+                  {isNotStarted ? "Season Standings & Leaderboard" : `Season #${seasonId} Leaderboard & Scout Standings`}
                 </h2>
                 <p className="text-sm text-muted-foreground">
                   Rankings based on detected MEV activity across all drafted rosters.
@@ -857,7 +929,9 @@ function FantasyLeaguePage() {
 
             {leaderboard.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-8 text-center text-muted-foreground text-sm">
-                No participants have drafted searchers in Season #{seasonId} yet. Be the first to draft above!
+                {isNotStarted
+                  ? "Season 1 has not started yet. Standings will appear once Season 1 is started and scouts draft their rosters."
+                  : `No participants have drafted searchers in Season #${seasonId} yet. Be the first to draft above!`}
               </div>
             ) : (
               <div className="overflow-x-auto">

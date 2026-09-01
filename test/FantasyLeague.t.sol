@@ -208,4 +208,36 @@ contract FantasyLeagueTest is Test {
         assertEq(oracle.allTimeScoutScore(lp2), 50);
         assertEq(oracle.allTimeScoutScore(lp3), 0);
     }
+
+    function test_CannotActBeforeSeasonStarts() public {
+        assertEq(league.currentSeasonId(), 0);
+
+        // Cannot stake pick before startSeason
+        vm.prank(lp1);
+        vm.expectRevert(MEVScoutLeague.InvalidSeasonStatus.selector);
+        league.stakePick(traderA, 100 ether);
+
+        // Cannot lock before startSeason
+        vm.expectRevert(MEVScoutLeague.InvalidSeasonStatus.selector);
+        league.lockSeason();
+
+        // Cannot settle before startSeason
+        vm.expectRevert(MEVScoutLeague.InvalidSeasonStatus.selector);
+        league.settleSeason();
+
+        // Cannot top up before startSeason
+        vm.expectRevert(MEVScoutLeague.InvalidSeasonStatus.selector);
+        league.topUpPrizePool(100 ether);
+
+        // Deployer starts season 1 explicitly
+        league.startSeason();
+        assertEq(league.currentSeasonId(), 1);
+
+        // Now LP1 can stake
+        vm.prank(lp1);
+        league.stakePick(traderA, 100 ether);
+        (, , uint256 prizePool, ) = league.seasons(1);
+        assertEq(prizePool, 100 ether);
+    }
 }
+

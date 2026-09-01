@@ -83,6 +83,7 @@ contract MEVScoutLeague {
 
     /// @notice Locks the current season, ending drafting and beginning the active scoring phase.
     function lockSeason() external onlyOwner {
+        if (currentSeasonId == 0) revert InvalidSeasonStatus();
         Season storage season = seasons[currentSeasonId];
         if (season.status != SeasonStatus.DRAFTING) revert InvalidSeasonStatus();
         
@@ -92,6 +93,7 @@ contract MEVScoutLeague {
 
     /// @notice Settles the current season, calculating and allocating proportional payouts.
     function settleSeason() external onlyOwner {
+        if (currentSeasonId == 0) revert InvalidSeasonStatus();
         Season storage season = seasons[currentSeasonId];
         if (season.status != SeasonStatus.ACTIVE) revert InvalidSeasonStatus();
         
@@ -135,6 +137,7 @@ contract MEVScoutLeague {
 
     /// @notice LPs call this to stake MRLV and draft a trader for the current season.
     function stakePick(address trader, uint256 amount) external {
+        if (currentSeasonId == 0) revert InvalidSeasonStatus();
         Season storage season = seasons[currentSeasonId];
         if (season.status != SeasonStatus.DRAFTING) revert InvalidSeasonStatus();
         if (amount == 0) revert ZeroStake();
@@ -157,6 +160,7 @@ contract MEVScoutLeague {
 
     /// @notice Permissionless top-up of the current season's prize pool.
     function topUpPrizePool(uint256 amount) external {
+        if (currentSeasonId == 0) revert InvalidSeasonStatus();
         Season storage season = seasons[currentSeasonId];
         // Can only top-up during drafting or active phases.
         if (season.status == SeasonStatus.SETTLED) revert InvalidSeasonStatus();
