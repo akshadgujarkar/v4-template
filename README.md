@@ -22,6 +22,57 @@
 
 <br/>
 
+## 🤝 Partner Integrations
+
+**No partner integrations.** This project is built entirely from scratch using Uniswap v4 and standard open-source libraries.
+
+---
+
+## 💡 Why MRLV? — Original Idea
+
+> **MRLV doesn't just detect MEV — it captures the value and gives it back to the LPs who were being exploited.**
+
+Most MEV projects either **block** toxic flow or simply **report** it. MRLV is fundamentally different:
+
+| What's Novel | How It Works | Where in Code |
+|---|---|---|
+| 🔁 **MEV Redistribution** (not just detection) | Every swap is scored 0–100 in `beforeSwap`. Toxic flow pays a dynamic fee surcharge. The surplus is routed to a `RewardVault` that distributes to honest, long-term LPs. | [`MRLVHook.sol`](src/MRLVHook.sol) → [`MEVDetector.sol`](src/MEVDetector.sol) → [`RewardVault.sol`](src/RewardVault.sol) |
+| 🎮 **Fantasy MEV League** | LPs draft known MEV searcher addresses, stake MRLV tokens, and earn prize pool shares when their picks get flagged on-chain. No existing hook or DeFi project does this. | [`MEVScoutLeague.sol`](src/fantasy-league/MEVScoutLeague.sol), [`ScoutRoster.sol`](src/fantasy-league/ScoutRoster.sol), [`ScoutPointsOracle.sol`](src/fantasy-league/ScoutPointsOracle.sol) |
+| 🔒 **Liquidity Escrow Anti-JIT** | All liquidity additions go through a pending escrow with configurable maturity blocks. Direct `addLiquidity` calls are rejected — only matured positions activate. | [`MRLVHook.sol` → `depositPendingLiquidity()`](src/MRLVHook.sol) |
+| 🎖️ **Soulbound Loyalty NFTs** | Non-transferable ERC-721 badges (🥉 Bronze → 🥈 Silver → 🥇 Gold) auto-upgrade based on LP tenure and boost reward multipliers (1x → 2x → 3x). | [`LoyaltyNFT.sol`](src/LoyaltyNFT.sol), [`LoyaltyManager.sol`](src/LoyaltyManager.sol) |
+
+---
+
+## ⚡ What We Built — Unique Execution
+
+**10 production-grade smart contracts + off-chain relayer + full-stack frontend**, not a minimal prototype.
+
+| Layer | Components | Key Technical Detail |
+|---|---|---|
+| 🪝 **v4 Hook Engine** | `MRLVHook.sol` (704 lines) | Uses `LPFeeLibrary.OVERRIDE_FEE_FLAG` for per-swap dynamic fee overrides via `beforeSwap` / `afterSwap` |
+| 🔍 **Detection Engine** | `MEVDetector.sol` (197 lines) | 4 independent on-chain heuristics: priority fee anomaly, direction reversal, price impact sizing, JIT maturity |
+| 📈 **Fee Scaling** | `DynamicFeeManager.sol` (110 lines) | Non-linear fee curve (0.30% → 3.00%) with per-block rate limiting (≤3x jump cap) and hard ceiling |
+| 💰 **Reward System** | `RewardVault.sol` + `LoyaltyManager.sol` + `LoyaltyNFT.sol` + `MRLVToken.sol` | Epoch-based distribution weighted by normalized LP scores (amount × duration × contribution × consistency), soulbound NFTs, veMRLV-style governance locks, insurance pool (5% BPS), 50% early exit penalty |
+| 🎮 **Fantasy League** | `MEVScoutLeague.sol` + `ScoutRoster.sol` + `ScoutPointsOracle.sol` | Complete season lifecycle (DRAFTING → ACTIVE → SETTLED), 3-pick roster cap, on-chain draft verification, proportional prize pool settlement |
+| 📡 **Off-Chain Relayer** | [`relayer/index.js`](src/fantasy-league/relayer/index.js) (422 lines) | Ethers.js v6 event listener with serialized tx queue, historical event backfill, 3s polling fallback, nonce management |
+| 💻 **Full-Stack Frontend** | 6 pages: Trade, Liquidity, Portfolio, Fantasy League, Governance, Landing | React + TanStack Router + Framer Motion + Radix UI + Tailwind, real-time risk score feedback, live season countdown |
+| ✅ **Test Suite** | 5 Foundry test files (~78K bytes) | `MRLVHook.t.sol`, `MEVDetector.t.sol`, `DynamicFeeManager.t.sol`, `MRLVRewards.t.sol`, `FantasyLeague.t.sol` |
+
+---
+
+## 🌍 Impact — Value to Users & DeFi
+
+| Impact Area | Description |
+|---|---|
+| 🛡️ **LP Protection** | Passive LPs no longer silently lose to MEV. Toxic flow pays for itself through dynamic surcharges. |
+| ⚖️ **Aligned Incentives** | Searchers still operate, but their activity funds LP rewards — turning adversarial MEV into a positive-sum game. |
+| 📈 **Loyalty Rewards** | Long-term LPs earn boosted yields via tiered multipliers (1x–3x), incentivizing sticky liquidity over mercenary capital. |
+| 🚫 **Anti-Mercenary** | 50% reward reduction for LPs who withdraw within 7 days — discourages flash deposits and JIT gaming. |
+| 👥 **Decentralized Monitoring** | Fantasy League creates a community of searcher-watchers, crowdsourcing MEV intelligence at scale. |
+| ⚙️ **Full Governance** | All risk weights, fee curves, maturity windows, and thresholds are governance-configurable via `MRLVToken` locking. |
+
+---
+
 <div align="center">
 
 ### 📖 Table of Contents
