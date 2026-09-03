@@ -28,6 +28,15 @@
 
 ---
 
+## 🎥 Demo & Presentation
+
+| Resource | Link |
+|---|---|
+| 📹 **Demo Video** | [Watch on YouTube](https://youtu.be/yWpKEfUPdkY?si=rqw1jjLkapFEScPo) |
+| 📊 **Presentation Slides** | [View on Google Slides](https://docs.google.com/presentation/d/1bpO4T4m5UYHg6QhZ2-CzU0u_feSKwjEb/edit?usp=sharing&ouid=103469052666671778887&rtpof=true&sd=true) |
+
+---
+
 ## 💡 Why MRLV? — Original Idea
 
 > **MRLV doesn't just detect MEV — it captures the value and gives it back to the LPs who were being exploited.**
@@ -80,6 +89,11 @@ Most MEV projects either **block** toxic flow or simply **report** it. MRLV is f
 [Executive Summary](#-executive-summary) • [The Problem](#-the-problem--the-mrlv-solution) • [Architecture](#️-system-architecture) • [Core Modules](#-core-components--modules) • [Repo Structure](#-repository-structure) • [Quickstart](#-getting-started--local-development) • [Fantasy League](#-how-the-fantasy-mev-league-works) • [Security](#️-security--architecture-best-practices) • [License](#-license)
 
 </div>
+
+---
+
+> [!NOTE]
+> **Repository Migration:** This project has been migrated from the original repository to this `v4-template` repo for local deployment and testing. If you want to see the original repo (with the real commit history), here it is: **[MEV-Redistributive-Liquidity-Vault](https://github.com/akshadgujarkar/MEV-Redistributive-Liquidity-Vault)**. The project is now fully migrated and maintained in this repo with new commits history.
 
 ---
 
@@ -244,7 +258,7 @@ Computes adaptive pool fees according to the calculated risk score. Baseline fee
 ### `RewardVault.sol` & `LoyaltyManager.sol` — LP Value Redistribution
 Collects captured surplus penalty fees and manages continuous LP staking duration, awarding loyalty tiers:
 
-🥉 **Bronze** → 🥈 **Silver** → 🥇 **Gold** → 💎 **Platinum**
+🥉 **Bronze** → 🥈 **Silver** → 🥇 **Gold**
 
 Generates on-chain Soulbound/Loyalty NFT credentials and pays boosted reward yields in `MRLVToken`.
 
